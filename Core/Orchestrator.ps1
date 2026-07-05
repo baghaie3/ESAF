@@ -5,7 +5,7 @@ function Invoke-ESAFOrchestrator {
         [array]$SystemRoles,     # برای حالت Role-Based
         [string]$EvidencePath
     )
-11
+
     Write-Host "[*] Initializing ESAF Orchestrator..." -ForegroundColor Cyan
     Write-Host "[*] Scan Mode: $ScanType" -ForegroundColor Cyan
     
