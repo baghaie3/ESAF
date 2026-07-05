@@ -1,3 +1,7 @@
+param(
+    [switch]$NonInteractive
+)
+
 $ErrorActionPreference = "Stop"
 
 # Load Core Files

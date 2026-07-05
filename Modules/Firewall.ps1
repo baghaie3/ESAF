@@ -4,166 +4,132 @@ function Invoke-ESAFFirewallAssessment {
     )
 
     $findings = @()
+    $evidenceLog = ""
 
     try {
-        # 1. جمع‌آوری داده از Get-NetFirewallProfile
-        $profiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
-        
-        # 2. جمع‌آوری داده از Netsh
-        $netshOutput = netsh advfirewall show allprofiles state | Out-String
-        
-        # 3. بررسی وضعیت سرویس
-        $mpsSvc = Get-Service -Name MpsSvc -ErrorAction SilentlyContinue
-        $serviceState = if ($mpsSvc) { "$($mpsSvc.Name) is $($mpsSvc.Status) (StartType: $($mpsSvc.StartType))" } else { "MpsSvc NOT FOUND" }
-
-        # تعریف نگاشت دقیق برای حل ناهماهنگی نام‌ها در ویندوز
-        # دامین = Domain | پرایوت = Private (رجیستری: StandardProfile، پاورشل: Standard) | پابلیک = Public
-        $profileConfigs = @(
-            @{
-                DisplayName  = "Domain"
-                CmdletName   = "Domain"
-                RegistryName = "DomainProfile"
-                NetshPattern = "Domain"
-            },
-            @{
-                DisplayName  = "Private"
-                CmdletName   = "Standard"  # در پاورشل نام اصلی پروفایل پرایوت Standard است
-                RegistryName = "StandardProfile"
-                NetshPattern = "Private"
-            },
-            @{
-                DisplayName  = "Public"
-                CmdletName   = "Public"
-                RegistryName = "PublicProfile"
-                NetshPattern = "Public"
-            }
+        $profiles = @(
+            @{ PSName = "Domain";  NetshName = "Domain Profile";  GpoName = "DomainProfile";  RegistryValue = 1 }
+            @{ PSName = "Private"; NetshName = "Private Profile"; GpoName = "StandardProfile"; RegistryValue = 1 }
+            @{ PSName = "Public";  NetshName = "Public Profile";  GpoName = "PublicProfile";  RegistryValue = 1 }
         )
 
-        # 4. بررسی رجیستری GPO Policy
-        $gpoRegistryPath = "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall"
-        $gpoEvidence = ""
-        $gpoStates = @{}
+        $fwProfiles = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+        $netshOutput = netsh advfirewall show allprofiles | Out-String
+        $mpsSvc = Get-Service -Name "MpsSvc" -ErrorAction SilentlyContinue
 
-        if (Test-Path $gpoRegistryPath) {
-            $gpoEvidence += "GPO Registry Policies Found:`n"
-            foreach ($config in $profileConfigs) {
-                $targetPath = Join-Path $gpoRegistryPath $config.RegistryName
-                if (Test-Path $targetPath) {
-                    $enableVal = Get-ItemProperty -Path $targetPath -Name "EnableFirewall" -ErrorAction SilentlyContinue
-                    if ($enableVal) {
-                        $gpoStates[$config.DisplayName] = [bool]$enableVal.EnableFirewall
-                        $gpoEvidence += "- GPO $($config.DisplayName): EnableFirewall = $($enableVal.EnableFirewall)`n"
-                    } else {
-                        $gpoStates[$config.DisplayName] = $null
-                    }
-                } else {
-                    $gpoStates[$config.DisplayName] = $null
-                }
-            }
+        $gpoBasePaths = @(
+            "HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall",
+            "HKLM:\SOFTWARE\WOW6432Node\Policies\Microsoft\WindowsFirewall"
+        )
+
+        $evidenceLog += "Windows Defender Firewall Assessment`n"
+        $evidenceLog += "Service Check:`n"
+        if ($mpsSvc) {
+            $evidenceLog += "- MpsSvc Status: $($mpsSvc.Status)`n"
+            $evidenceLog += "- MpsSvc StartType: $((Get-CimInstance Win32_Service -Filter "Name='MpsSvc'" -ErrorAction SilentlyContinue).StartMode)`n`n"
         } else {
-            $gpoEvidence = "No Centralized GPO Firewall Registry settings found under HKLM:\SOFTWARE\Policies\Microsoft\WindowsFirewall`n"
-            foreach ($config in $profileConfigs) { $gpoStates[$config.DisplayName] = $null }
+            $evidenceLog += "- MpsSvc service not found.`n`n"
         }
 
-        # ذخیره شواهد خام برای مستندسازی
-        if ($EvidencePath) {
-            $rawLog = "=== SERVICE STATE ===`n$serviceState`n`n=== NETSH OUTPUT ===`n$netshOutput`n`n=== GPO REGISTRY ===`n$gpoEvidence"
-            if ($profiles) {
-                $rawLog += "`n=== CMDLET PROFILES ===`n" + ($profiles | Format-List | Out-String)
-            }
-            $rawLog | Out-File -FilePath (Join-Path $EvidencePath "Firewall_Diagnostic_Evidence.txt") -Encoding UTF8
-        }
+        foreach ($profile in $profiles) {
+            $profileName = $profile.PSName
+            $netshName   = $profile.NetshName
+            $gpoName     = $profile.GpoName
 
-        # پردازش و اعتبارسنجی تک‌تک پروفایل‌ها
-        foreach ($config in $profileConfigs) {
-            $pName = $config.DisplayName
-
-            # الف) بررسی وضعیت از خروجی Netsh
+            $psEnabled = $null
             $netshEnabled = $null
-            # الگو: پیدا کردن فایروال متناظر با الگوی NetshPattern و گرفتن وضعیت خط بعد از آن
-            if ($netshOutput -match "(?i)$($config.NetshPattern)\s+Profile\s+Settings:\s*`r?`n(?:.+`r?`n)*?State\s+(ON|OFF)") {
-                $netshEnabled = ($matches[1] -eq "ON")
-            } elseif ($netshOutput -match "(?i)$($config.NetshPattern).*?State\s+(ON|OFF)") {
-                # الگوی کمکی در صورتی که ساختار خروجی ساده‌تر باشد
-                $netshEnabled = ($matches[1] -eq "ON")
+            $gpoEnabled = $null
+
+            $psProfile = $fwProfiles | Where-Object { $_.Name -eq $profileName }
+            if ($psProfile) {
+                $psEnabled = [bool]$psProfile.Enabled
             }
 
-            # ب) بررسی وضعیت از Cmdlet پاورشل (تطبیق با نام بومی Standard یا نام نمایشی)
-            $cmdletProfile = $profiles | Where-Object { $_.Name -eq $config.CmdletName -or $_.Name -eq $pName }
-            $cmdletEnabled = if ($cmdletProfile) { $cmdletProfile.Enabled } else { $null }
-
-            # ج) بررسی وضعیت اعمال شده از GPO
-            $gpoEnabled = $gpoStates[$pName]
-
-            # د) منطق نهایی بررسی وضعیت فعال بودن فایروال
-            $isEffectiveEnabled = $false
-            if ($gpoEnabled -eq $true) {
-                $isEffectiveEnabled = $true
-            } elseif ($netshEnabled -eq $true) {
-                $isEffectiveEnabled = $true
-            } elseif ($cmdletEnabled -eq $true -and $gpoEnabled -ne $false) {
-                $isEffectiveEnabled = $true
+            if ($netshOutput -match "(?s)$([regex]::Escape($netshName)).*?State\s+([A-Z]+)") {
+                $netshState = $matches[1]
+                $netshEnabled = ($netshState -eq "ON")
             }
 
-            # تهیه شواهد متنی برای این پروفایل
-            $evidenceSummary = @"
-Profile Analyzed: $pName (Mapped Standard Name: $($config.CmdletName))
-- Netsh State: $(if ($null -ne $netshEnabled) { if ($netshEnabled) {"ON"} else {"OFF"} } else {"Unknown"})
-- Cmdlet State: $(if ($null -ne $cmdletEnabled) { $cmdletEnabled } else {"Unknown"})
-- GPO Registry Enforced: $(if ($null -ne $gpoEnabled) { $gpoEnabled } else {"Not Configured"})
-- Firewall Service Running: $(if ($mpsSvc -and $mpsSvc.Status -eq "Running") {"Yes"} else {"No"})
-"@
-
-            if ($isEffectiveEnabled) {
-                $findings += New-ESAFFinding `
-                    -FindingID "FW-INFO-$($pName.ToUpper())-001" `
-                    -Category "Firewall" `
-                    -Title "Firewall profile is active ($pName)" `
-                    -Severity "Informational" `
-                    -AffectedComponent $pName `
-                    -Description "The Windows Firewall $pName profile is verified as active and enforcing policies." `
-                    -Evidence $evidenceSummary `
-                    -Impact "Informational finding. Host protection active." `
-                    -Recommendation "No action required." `
-                    -Reference "Microsoft Security Baseline - Defender Firewall" `
-                    -Status "Informational"
-            }
-            else {
-                $severity = "Medium"
-                $rec = "Enable the $pName firewall profile using local Group Policy, active GPO, or PowerShell."
-                if ($mpsSvc -and $mpsSvc.Status -ne "Running") {
-                    $severity = "High"
-                    $rec = "The firewall service is stopped. Start the MpsSvc service and ensure it is set to Automatic startup."
+            foreach ($basePath in $gpoBasePaths) {
+                $fullPath = Join-Path $basePath $gpoName
+                if (Test-Path $fullPath) {
+                    $regValue = Get-ItemProperty -Path $fullPath -Name "EnableFirewall" -ErrorAction SilentlyContinue
+                    if ($null -ne $regValue) {
+                        $gpoEnabled = ($regValue.EnableFirewall -eq 1)
+                        break
+                    }
                 }
+            }
 
+            $profileEvidence = "Profile: $profileName`n"
+            $profileEvidence += "- PowerShell(Get-NetFirewallProfile): $psEnabled`n"
+            $profileEvidence += "- netsh advfirewall: $netshEnabled`n"
+            $profileEvidence += "- GPO/Registry Policy: $gpoEnabled`n"
+            if ($mpsSvc) {
+                $profileEvidence += "- MpsSvc Service Status: $($mpsSvc.Status)`n"
+            }
+
+            $evidenceLog += $profileEvidence + "`n"
+
+            $isProtected = $false
+
+            if ($gpoEnabled -eq $true) {
+                $isProtected = $true
+            }
+            elseif ($psEnabled -eq $true -or $netshEnabled -eq $true) {
+                $isProtected = $true
+            }
+
+            if (-not $isProtected) {
                 $findings += New-ESAFFinding `
-                    -FindingID "FW-WARN-$($pName.ToUpper())-001" `
+                    -FindingID "SEC-FW-$($profileName.ToUpper())-001" `
                     -Category "Firewall" `
-                    -Title "Firewall profile disabled ($pName)" `
-                    -Severity $severity `
-                    -AffectedComponent $pName `
-                    -Description "All diagnostic indicators (Netsh, Cmdlets, Registry) show the $pName firewall profile is inactive." `
-                    -Evidence $evidenceSummary `
-                    -Impact "Disabling host-based firewalls permits unrestricted lateral network connections, exposing services to unauthorized network access." `
-                    -Recommendation $rec `
-                    -Reference "Microsoft Security Baseline - Defender Firewall" `
+                    -Title "Windows Defender Firewall appears disabled for $profileName profile" `
+                    -Severity "High" `
+                    -AffectedComponent "Windows Defender Firewall - $profileName Profile" `
+                    -Description "The $profileName firewall profile appears to be disabled or not effectively enforced based on PowerShell, netsh, and policy/registry validation." `
+                    -Evidence $profileEvidence `
+                    -Impact "A disabled firewall profile increases exposure to unauthorized inbound and lateral network access, weakening host-based segmentation and attack resistance." `
+                    -Recommendation "Enable Windows Defender Firewall for the $profileName profile and ensure enforcement through Group Policy where applicable." `
+                    -Standard "CIS Microsoft Windows Server Benchmark" `
+                    -Reference "Windows Defender Firewall configuration guidance" `
                     -Status "Open"
             }
         }
 
+        if ($mpsSvc -and $mpsSvc.Status -ne "Running") {
+            $findings += New-ESAFFinding `
+                -FindingID "SEC-FW-SVC-001" `
+                -Category "Firewall" `
+                -Title "Windows Defender Firewall service is not running" `
+                -Severity "High" `
+                -AffectedComponent "MpsSvc" `
+                -Description "The Windows Defender Firewall service (MpsSvc) is not running." `
+                -Evidence "MpsSvc Status: $($mpsSvc.Status)" `
+                -Impact "If the firewall service is not running, firewall policy enforcement may fail or become inconsistent." `
+                -Recommendation "Set the Windows Defender Firewall service startup type appropriately and ensure the service is running." `
+                -Standard "CIS Microsoft Windows Server Benchmark" `
+                -Reference "Windows Defender Firewall configuration guidance" `
+                -Status "Open"
+        }
+
+        if ($EvidencePath) {
+            $evidenceLog | Out-File -FilePath (Join-Path $EvidencePath "Firewall_Evidence.txt") -Encoding UTF8
+        }
     }
     catch {
         $findings += New-ESAFFinding `
-            -FindingID "FW-ERR-001" `
+            -FindingID "SEC-FW-ERR-001" `
             -Category "Firewall" `
-            -Title "Firewall diagnostic failed" `
+            -Title "Firewall assessment execution failed" `
             -Severity "Medium" `
             -AffectedComponent "Windows Defender Firewall" `
-            -Description "An unexpected error occurred during execution." `
+            -Description "The firewall assessment module encountered an exception during execution." `
             -Evidence $_.Exception.Message `
-            -Impact "Visibility reduced." `
-            -Recommendation "Investigate PowerShell host errors and check administrative rights." `
-            -Reference "Internal Framework Validation" `
+            -Impact "Firewall posture could not be fully assessed, reducing overall visibility." `
+            -Recommendation "Review execution errors, permissions, and firewall-related cmdlet availability." `
+            -Standard "Internal ESAF Validation" `
+            -Reference "Firewall module execution troubleshooting" `
             -Status "Open"
     }
 

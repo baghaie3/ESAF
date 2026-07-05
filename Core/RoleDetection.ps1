@@ -1,39 +1,42 @@
-function Get-ESAFSystemRoles {
-    $roles = @()
+# Core\RoleDetection.ps1
+function Get-ESAFHostRole {
+    [CmdletBinding()]
+    param()
+
+    $role = "Unknown"
 
     try {
-        $cs = Get-CimInstance Win32_ComputerSystem
-
-        if ($cs.DomainRole -ge 4) {
-            $roles += "Domain Controller"
-        }
-        elseif ($cs.PartOfDomain) {
-            $roles += "Member Server or Domain-Joined Client"
+        $dcRegPath = "HKLM:\SYSTEM\CurrentControlSet\Services\NTDS"
+        if (Test-Path $dcRegPath) {
+            $role = "DomainController"
         }
         else {
-            $roles += "Workgroup System"
-        }
+            $cs = Get-CimInstance Win32_ComputerSystem
 
-        $features = Get-WindowsFeature -ErrorAction SilentlyContinue
-
-        if ($features) {
-            if (($features | Where-Object { $_.Name -eq "DNS" -and $_.InstallState -eq "Installed" })) {
-                $roles += "DNS Server"
+            if ($cs.PartOfDomain -eq $true) {
+                if ($cs.DomainRole -in 3,4) {
+                    $role = "MemberServer"
+                }
+                elseif ($cs.DomainRole -in 2) {
+                    $role = "DomainJoinedWorkstation"
+                }
+                else {
+                    $role = "DomainJoinedUnknown"
+                }
             }
-            if (($features | Where-Object { $_.Name -eq "Web-Server" -and $_.InstallState -eq "Installed" })) {
-                $roles += "IIS Web Server"
-            }
-            if (($features | Where-Object { $_.Name -eq "FS-FileServer" -and $_.InstallState -eq "Installed" })) {
-                $roles += "File Server"
-            }
-            if (($features | Where-Object { $_.Name -eq "AD-Domain-Services" -and $_.InstallState -eq "Installed" })) {
-                $roles += "Active Directory Domain Services"
+            else {
+                if ($cs.Role -like "*Workstation*") {
+                    $role = "StandaloneWorkstation"
+                }
+                else {
+                    $role = "StandaloneServer"
+                }
             }
         }
     }
     catch {
-        $roles += "Unknown"
+        $role = "Unknown"
     }
 
-    return $roles | Select-Object -Unique
+    return $role
 }
