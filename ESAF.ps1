@@ -39,7 +39,7 @@ $filesToDotSource = @(
     (Join-Path $modulesPath "LocalSecurity.ps1"),
     (Join-Path $modulesPath "Services.ps1"),
     (Join-Path $modulesPath "NetworkSecurity.ps1"),
-    (Join-Path $modulesPath "IdentityAudit.ps1"),
+    (Join-Path $modulesPath "IdentityAudit.ps1")
     (Join-Path $modulesPath "ActiveDirectoryAudit.ps1")
 
 )
@@ -59,8 +59,6 @@ Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host "  ESAF - Enterprise Security Assessment Framework" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "              Developed by: YOUR_NAME_HERE" -ForegroundColor Yellow
 Write-Host ""
 
 # ----------------------------
@@ -142,8 +140,6 @@ Write-Host ""
 # ----------------------------
 # Orchestrator
 # ----------------------------
-$script:ESAFFullChecks = @()
-
 $findings = @()
 
 try {
@@ -170,13 +166,8 @@ $txtReportPath  = Join-Path $runFolder "DC_Assessment.txt"
 # Reporting Calls (Fixed)
 # ----------------------------
 try {
-Export-ESAFHtmlReport `
-    -Findings $findings `
-    -FullChecks $script:ESAFFullChecks `
-    -Path $htmlReportPath `
-    -Roles $hostRole `
-    -SystemName $hostname `
-    -ScanType $scanMode}
+    Export-ESAFHtmlReport -Findings $findings -Path $htmlReportPath -Roles $hostRole -SystemName $hostname -ScanType $scanMode
+}
 catch {
     Write-Host "[!] Failed to generate HTML report: $($_.Exception.Message)" -ForegroundColor Red
 }

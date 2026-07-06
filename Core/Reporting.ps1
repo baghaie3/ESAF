@@ -22,8 +22,7 @@ function Export-ESAFHtmlReport {
         [string]$Path,
         [array]$Roles,
         [string]$SystemName,
-        [string]$ScanType,
-        [array]$FullChecks = @()
+        [string]$ScanType
     )
 
     $reportDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -59,7 +58,7 @@ function Export-ESAFHtmlReport {
             default    { "" }
         }
 
-@"
+        @"
 <tr class="$severityClass">
     <td>$($finding.FindingID)</td>
     <td>$($finding.Category)</td>
@@ -73,26 +72,6 @@ function Export-ESAFHtmlReport {
     <td><pre>$($finding.Impact)</pre></td>
     <td><pre>$($finding.Recommendation)</pre></td>
     <td>$($finding.Status)</td>
-</tr>
-"@
-    }
-
-    $fullRows = foreach ($check in $FullChecks) {
-        $statusClass = switch ($check.Status) {
-            "Fail"    { "sev-critical" }
-            "Warning" { "sev-medium" }
-            "Info"    { "sev-info" }
-            "OK"      { "sev-low" }
-            default   { "" }
-        }
-
-@"
-<tr class="$statusClass">
-    <td>$($check.Module)</td>
-    <td>$($check.CheckName)</td>
-    <td><pre>$($check.Value)</pre></td>
-    <td>$($check.Status)</td>
-    <td><pre>$($check.Recommendation)</pre></td>
 </tr>
 "@
     }
@@ -123,7 +102,7 @@ function Export-ESAFHtmlReport {
             margin-top: 0;
             color: #0f172a;
         }
-        .meta, .summary, .exec-summary, .full-report-box {
+        .meta, .summary, .exec-summary {
             margin-bottom: 24px;
             padding: 16px;
             border-radius: 8px;
@@ -138,11 +117,6 @@ function Export-ESAFHtmlReport {
         .exec-summary {
             background: #eef6ff;
             border-left: 5px solid #2563eb;
-        }
-        .full-report-box {
-            background: #f8fafc;
-            border: 1px solid #cbd5e1;
-            display: none;
         }
         .badge {
             display: inline-block;
@@ -159,19 +133,6 @@ function Export-ESAFHtmlReport {
         .low      { background: #2563eb; }
         .info     { background: #6b7280; }
         .total    { background: #111827; }
-        .toggle-btn {
-            background: #1d4ed8;
-            color: white;
-            border: none;
-            padding: 10px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            margin-bottom: 16px;
-        }
-        .toggle-btn:hover {
-            background: #1e40af;
-        }
         table {
             width: 100%;
             border-collapse: collapse;
@@ -214,19 +175,6 @@ function Export-ESAFHtmlReport {
             text-align: right;
         }
     </style>
-    <script>
-        function toggleFullReport() {
-            var section = document.getElementById('fullReportSection');
-            var button = document.getElementById('fullReportButton');
-            if (section.style.display === 'none' || section.style.display === '') {
-                section.style.display = 'block';
-                button.innerText = 'Hide Full Report';
-            } else {
-                section.style.display = 'none';
-                button.innerText = 'Show Full Report';
-            }
-        }
-    </script>
 </head>
 <body>
     <div class="container">
@@ -253,26 +201,6 @@ function Export-ESAFHtmlReport {
             <span class="badge low">Low: $($lowCount)</span>
             <span class="badge info">Info: $($infoCount)</span>
             <span class="badge total">Total: $($totalCount)</span>
-        </div>
-
-        <button id="fullReportButton" class="toggle-btn" onclick="toggleFullReport()">Show Full Report</button>
-
-        <div id="fullReportSection" class="full-report-box">
-            <h3>Full Report</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Module</th>
-                        <th>Check</th>
-                        <th>Value</th>
-                        <th>Status</th>
-                        <th>Recommendation</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    $($fullRows -join "`n")
-                </tbody>
-            </table>
         </div>
 
         <h3>Detailed Findings</h3>
@@ -308,7 +236,6 @@ function Export-ESAFHtmlReport {
 
     $html | Out-File -FilePath $Path -Encoding UTF8
 }
-
 
 function Export-ESAFTxtSummary {
     param(

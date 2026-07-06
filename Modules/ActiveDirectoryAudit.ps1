@@ -1,5 +1,6 @@
 function Invoke-ESAFActiveDirectoryAuditAssessment {
-    param([string]$EvidencePath)
+    [CmdletBinding()]
+    param()
 
     $findings = @()
 
@@ -169,14 +170,6 @@ function Invoke-ESAFActiveDirectoryAuditAssessment {
         }
     }
     catch {}
- Add-ESAFFullCheck `
-        -Module "ActiveDirectoryAudit" `
-        -CheckName "FSMO Role Distribution" `
-        -Value $fsmoEvidence `
-        -Status (if ($uniqueFsmo.Count -eq 1) { "Warning" } else { "OK" }) `
-        -Recommendation "Check FSMO distribution for resilience and best practices."
-
-
 
     $privilegedGroups = @(
         @{ Name = "Domain Admins";       Id = "AD-GRP-DA-001"; Severity = "High"   },
