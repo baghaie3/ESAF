@@ -33,7 +33,7 @@ function Export-ESAFHtmlReport {
     $lowCount      = ($Findings | Where-Object { $_.Severity -eq "Low" } | Measure-Object).Count
     $infoCount     = ($Findings | Where-Object { $_.Severity -eq "Info" } | Measure-Object).Count
     $totalCount    = ($Findings | Measure-Object).Count
-2
+
     $executiveSummary = ""
     if ($criticalCount -gt 0 -or $highCount -gt 0) {
         $executiveSummary = "The security check found important issues. Please fix the (Critical) and (High) issues immediately"
