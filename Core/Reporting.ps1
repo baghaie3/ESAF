@@ -36,13 +36,13 @@ function Export-ESAFHtmlReport {
 
     $executiveSummary = ""
     if ($criticalCount -gt 0 -or $highCount -gt 0) {
-        $executiveSummary = "The assessment identified significant security issues requiring prioritized remediation. Immediate attention is recommended for Critical and High severity findings."
+        $executiveSummary = "The security check found important issues. Please fix the (Critical) and (High) issues immediately"
     }
     elseif ($mediumCount -gt 0) {
-        $executiveSummary = "The assessment identified moderate security weaknesses. Remediation should be planned to reduce attack surface and improve baseline compliance."
+        $executiveSummary = "We identified some medium-risk issues. Let's schedule fixes to reduce our exposure and ensure we follow our security policies."
     }
     elseif ($lowCount -gt 0 -or $infoCount -gt 0) {
-        $executiveSummary = "The assessment identified minor issues and informational observations. Addressing these findings will improve operational security posture and hardening consistency."
+        $executiveSummary = "The security check found some medium-risk issues. you need to make a plan to fix them. This will help you close security gaps and make sure you are following standard security rules"
     }
     else {
         $executiveSummary = "No security findings were identified during this assessment. The evaluated system appears aligned with the currently implemented checks and baseline expectations."
@@ -129,9 +129,9 @@ function Export-ESAFHtmlReport {
             font-size: 13px;
         }
         .critical { background: #7f1d1d; }
-        .high     { background: #dc2626; }
-        .medium   { background: #f59e0b; color: #111827; }
-        .low      { background: #2563eb; }
+        .high     { background: #f17272; }
+        .medium   { background: #f1df99; color: #111827; }
+        .low      { background: #488ee9; }
         .info     { background: #6b7280; }
         .total    { background: #111827; }
         table {
@@ -158,9 +158,9 @@ function Export-ESAFHtmlReport {
             background-color: #f9fafb;
         }
         .sev-critical { background-color: #fee2e2 !important; }
-        .sev-high     { background-color: #fecaca !important; }
-        .sev-medium   { background-color: #fef3c7 !important; }
-        .sev-low      { background-color: #dbeafe !important; }
+        .sev-high     { background-color: #f17272 !important; }
+        .sev-medium   { background-color: #f1df99 !important; }
+        .sev-low      { background-color: #488ee9 !important; }
         .sev-info     { background-color: #e5e7eb !important; }
         pre {
             white-space: pre-wrap;
