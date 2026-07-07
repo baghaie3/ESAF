@@ -1,58 +1,116 @@
 # Core\Orchestrator.ps1
 function Invoke-ESAFOrchestrator {
+    [CmdletBinding()]
     param(
-        [string]$ScanType,
-        [array]$SelectedModules,
-        [string]$HostRole
+        [Parameter(Mandatory=$true)]
+        [string]$ScanType,         # مثلا: Quick, Full, Custom
+        
+        [Parameter(Mandatory=$true)]
+        [array]$SelectedModules,    # لیست نام ماژول‌ها (بدون پسوند .ps1)
+        
+        [Parameter(Mandatory=$false)]
+        [string]$HostRole,          # مقادیر: DomainController, MemberServer, Workstation
+        
+        [Parameter(Mandatory=$false)]
+        [string]$SystemRoles,       # اضافه شدن برای انطباق با فراخوانی ESAF.ps1
+
+        [Parameter(Mandatory=$false)]
+        [string]$ESAFRoot,          # مسیر روت اصلی پروژه جهت حل مشکل مسیردهی ماژول‌ها
+
+        [string]$EvidencePath,
+        [string]$ReportPath
     )
+
+    # یکسان‌سازی وضعیت نقش سیستم برای جلوگیری از تداخل پارامترها
+    $resolvedRole = $HostRole
+    if ([string]::IsNullOrWhiteSpace($resolvedRole) -and -not [string]::IsNullOrWhiteSpace($SystemRoles)) {
+    $resolvedRole = $SystemRoles
+    }
 
     $allFindings = @()
 
-    # ۱. مطمئن شدن از بارگذاری پویا و دات‌سورس کردن فایل‌های پوشه Modules
-    $scriptPath = Split-Path -Parent $MyInvocation.ScriptName
-    $modulesPath = Join-Path $scriptPath "Modules"
-    
+    # مکان‌یابی دقیق پوشه Modules
+    $modulesPath = $null
+    if ($null -ne $ESAFRoot -and (Test-Path $ESAFRoot)) {
+        # اگر مسیر روت پروژه پاس داده شده باشد، پوشه Modules را از آنجا برمی‌داریم
+        $modulesPath = Join-Path $ESAFRoot "Modules"
+    } else {
+        # حالت بک‌آپ (Fallback) در صورت عدم ارسال ESAFRoot
+        $scriptPath = Split-Path -Parent $MyInvocation.ScriptName
+        if ([string]::IsNullOrEmpty($scriptPath)) {
+            $scriptPath = Get-Location
+        }
+        $modulesPath = Join-Path (Split-Path $scriptPath -Parent) "Modules"
+    }
+
     if (Test-Path $modulesPath) {
-        # بارگذاری تمام فایل‌های ps1 درون پوشه Modules
+        Write-Host "[*] Loading assessment modules from: $modulesPath" -ForegroundColor Gray
         Get-ChildItem -Path $modulesPath -Filter "*.ps1" | ForEach-Object {
             try {
                 . $_.FullName
             }
             catch {
-                Write-Warning "Failed to load module file: $($_.Name). Error: $_"
+                Write-Warning "Failed to load module: $($_.Name). Error: $_"
             }
         }
     }
+    else {
+        Write-Error "Modules folder not found at: $modulesPath"
+        return $null
+    }
 
-    # ۲. پیمایش و اجرای توابع ماژول‌های انتخاب شده
+    # ۲. فیلتر کردن هوشمند و اجرای ماژول‌ها بر اساس Role
     foreach ($moduleName in $SelectedModules) {
-        # حدس زدن نام تابع بر اساس نام ماژول (مثال: ActiveDirectoryAudit -> Invoke-ESAFActiveDirectoryAuditAssessment)
         $functionName = "Invoke-ESAF$($moduleName)Assessment"
         
         if (Get-Command $functionName -ErrorAction SilentlyContinue) {
-            Write-Host "[*] Executing: $moduleName ($functionName)..." -ForegroundColor Cyan
-            try {
-                # اجرای تابع و دریافت یافته‌ها
-                $moduleFindings = & $functionName
-                if ($null -ne $moduleFindings) {
-                    $allFindings += $moduleFindings
-                    Write-Host "[+] $moduleName completed with $(($moduleFindings | Measure-Object).Count) findings." -ForegroundColor Green
-                } else {
-                    Write-Host "[-] $moduleName returned no findings." -ForegroundColor Gray
-                }
+            
+            # --- منطق تشخیص صلاحیت اجرای ماژول (Role-Based Filtering) ---
+            $shouldExecute = $true
+            
+            # جلوگیری از اجرای ماژول‌های دامنه‌ای روی کلاینت‌ها یا سرورهای معمولی
+            if ($moduleName -match "GPOAudit|ActiveDirectoryAudit|DNSAudit" -and $resolvedRole -ne "DomainController") {
+                Write-Host ("[!] Skipping {0}: This module requires 'DomainController' role (Current: {1})." -f $moduleName, $resolvedRole) -ForegroundColor Yellow
+                $shouldExecute = $false
             }
-            catch {
-                Write-Host "[!] Module execution failed: $moduleName. Error: $_" -ForegroundColor Red
+
+            if ($shouldExecute) {
+                Write-Host "[*] Executing: $moduleName..." -ForegroundColor Cyan
+                try {
+                    # آماده‌سازی هوشمند پارامترها برای سازگاری با ماژول‌های قدیمی و جدید
+                    $params = @{}
+                    $targetFunc = Get-Command $functionName
+                    
+                    # فقط در صورتی پارامترها را پاس بده که تابع هدف آن‌ها را تعریف کرده باشد
+                    if ($targetFunc.Parameters.ContainsKey('EvidencePath') -and $null -ne $EvidencePath) {
+                        $params['EvidencePath'] = $EvidencePath
+                    }
+                    if ($targetFunc.Parameters.ContainsKey('HostRole') -and $null -ne $resolvedRole) {
+                        $params['HostRole'] = $resolvedRole
+                    }
+
+                    # اجرای داینامیک تابع ماژول با استفاده از Splatting
+                    $moduleFindings = & $functionName @params
+
+                    if ($null -ne $moduleFindings) {
+                        $allFindings += $moduleFindings
+                        Write-Host ("[+] {0} completed. Findings: {1}" -f $moduleName, ($moduleFindings | Measure-Object).Count) -ForegroundColor Green
+                    } else {
+                        Write-Host "[-] $moduleName returned no findings." -ForegroundColor Gray
+                    }
+                }
+                catch {
+                    Write-Host ("[!!] FATAL Error in {0}: {1}" -f $moduleName, $_.Exception.Message) -ForegroundColor Red
+                }
             }
         }
         else {
-            Write-Warning "Assessment function for '$moduleName' ($functionName) was not found in loaded scopes."
+            Write-Warning "Module function not found: $functionName. Ensure the file name and function name match ESAF standards."
         }
     }
 
     return $allFindings
 }
-
 
 function Invoke-ESAFActiveDirectoryAuditAssessment {
     [CmdletBinding()]

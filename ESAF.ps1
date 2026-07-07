@@ -42,7 +42,8 @@ $filesToDotSource = @(
     (Join-Path $modulesPath "NetworkSecurity.ps1"),
     (Join-Path $modulesPath "IdentityAudit.ps1"),
     (Join-Path $modulesPath "ActiveDirectoryAudit.ps1"),
-    (Join-Path $modulesPath "PasswordPolicy.ps1")
+    (Join-Path $modulesPath "PasswordPolicy.ps1"),
+    (Join-Path $modulesPath "GPOAudit.ps1")
 )
 
 foreach ($f in $filesToDotSource) {
@@ -58,7 +59,7 @@ foreach ($f in $filesToDotSource) {
 # ----------------------------
 Write-Host ""
 Write-Host "================================================" -ForegroundColor Cyan
-Write-Host "  ESAF - Enterprise Security Assessment Framework" -ForegroundColor Cyan
+Write-Host "  ESAF - Enterprise Security Assessment Framework by Kb7200" -ForegroundColor Cyan
 Write-Host "================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -137,7 +138,7 @@ $baselineModules = @(
 )
 
 $roleSpecificModulesMap = @{
-    "DomainController"       = @("IdentityAudit", "ActiveDirectoryAudit")
+    "DomainController"       = @("IdentityAudit", "ActiveDirectoryAudit", "GPOAudit")
     "MemberServer"           = @()
     "DomainJoinedWorkstation"= @()
     "IISServer"              = @()
@@ -146,7 +147,7 @@ $roleSpecificModulesMap = @{
 
 if (-not $NonInteractive) {
     Write-Host ""
-    Write-Host "================ ESAF Main Menu ================" -ForegroundColor Cyan
+    Write-Host "================ ESAF Main Menu by Kb7200 ================" -ForegroundColor Cyan
     Write-Host "1) Full Report"
     Write-Host "2) Server Report"
     Write-Host "3) Baseline Report"
@@ -232,11 +233,12 @@ $findings = @()
 
 try {
     $findings = Invoke-ESAFOrchestrator `
-        -ScanType        $scanMode `
-        -SelectedModules $selectedModules `
-        -SystemRoles     $null `
-        -EvidencePath    $evidenceFolder `
-        -HostRole        $hostRole
+    -ScanType $ScanMode `
+    -SelectedModules $SelectedModules `
+    -SystemRoles $HostRole `
+    -ESAFRoot $ESAFRoot `
+    -EvidencePath $EvidencePath `
+    -ReportPath $RunFolder
 }
 catch {
     Write-Host "[!] Orchestrator failed: $($_.Exception.Message)" -ForegroundColor Red
