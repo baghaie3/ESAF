@@ -251,25 +251,39 @@ function Invoke-ESAFActiveDirectoryAuditAssessment {
     }
     catch {}
 
+    # --- اصلاح جدید: منطق بهینه PasswordNeverExpires ---
     try {
-        $pwdNeverExpires = Get-ADUser -Filter { PasswordNeverExpires -eq $true -and Enabled -eq $true } -Properties SamAccountName,PasswordNeverExpires,AdminCount -ErrorAction Stop
-        foreach ($user in $pwdNeverExpires) {
-            $severity = if ($user.AdminCount -eq 1) { "High" } else { "Medium" }
+        $allNeverExpires = Get-ADUser -LDAPFilter '(&(objectCategory=person)(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=65536))' -Properties SamAccountName, DistinguishedName, DisplayName, Enabled
+        
+        # لیست گروه های سطح دسترسی بالا برای شناسایی کاربران ممتاز
+        $privilegedGroupNames = @('Domain Admins', 'Enterprise Admins', 'Schema Admins', 'Administrators', 'Account Operators', 'Server Operators', 'Backup Operators', 'Print Operators', 'Cert Publishers', 'Group Policy Creator Owners', 'Read-only Domain Controllers', 'Key Admins', 'Enterprise Key Admins')
+        
+        $privilegedMembersMap = @{}
+        foreach ($grp in $privilegedGroupNames) {
+            try {
+                Get-ADGroupMember -Identity $grp -Recursive -ErrorAction SilentlyContinue | Where-Object {$_.objectClass -eq 'user'} | ForEach-Object { $privilegedMembersMap[$_.DistinguishedName] = $true }
+            } catch {}
+        }
 
-            Add-ADFinding `
-                -FindingID "AD-PWD-NEVEREXPIRES-001" `
-                -Category "Identity & Access" `
-                -Title "Enabled account has password set to never expire" `
-                -Severity $severity `
-                -AffectedComponent "User Accounts" `
-                -Description "An enabled account was identified with a non-expiring password." `
-                -Evidence "SamAccountName: $($user.SamAccountName)`nAdminCount: $($user.AdminCount)" `
-                -Impact "Non-expiring passwords increase credential persistence risk, especially for privileged identities." `
-                -Recommendation "Require password rotation for standard accounts and migrate eligible service identities to managed service accounts." `
-                -Reference "Password lifecycle hardening"
+        foreach ($user in $allNeverExpires) {
+            # فقط کاربران ممتاز که PasswordNeverExpires دارند به عنوان Finding گزارش شوند
+            if ($privilegedMembersMap.ContainsKey($user.DistinguishedName)) {
+                Add-ADFinding `
+                    -FindingID "AD-PWD-NEVEREXPIRES-001" `
+                    -Category "Identity & Access" `
+                    -Title "Privileged account has password set to never expire" `
+                    -Severity "High" `
+                    -AffectedComponent "User Accounts" `
+                    -Description "A privileged enabled account was identified with a non-expiring password. This increases the risk of persistent access." `
+                    -Evidence "SamAccountName: $($user.SamAccountName)`nDistinguishedName: $($user.DistinguishedName)" `
+                    -Impact "Non-expiring passwords on privileged accounts significantly increase the risk if the account is compromised." `
+                    -Recommendation "Require password rotation for privileged accounts and migrate eligible service identities to gMSA." `
+                    -Reference "Password lifecycle hardening"
+            }
         }
     }
     catch {}
+    # --- پایان اصلاح ---
 
     try {
         $inactivePrivileged = Get-ADUser -Filter { Enabled -eq $true -and AdminCount -eq 1 } -Properties SamAccountName,LastLogonDate -ErrorAction Stop |

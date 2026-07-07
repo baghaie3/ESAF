@@ -31,6 +31,7 @@ Write-Host "ModulesPath: $modulesPath"       -ForegroundColor DarkGray
 # ----------------------------
 $filesToDotSource = @(
     (Join-Path $modulesPath "Common.ps1"),
+    (Join-Path $corePath    "Functions.ps1"),
     (Join-Path $corePath    "RoleDetection.ps1"),
     (Join-Path $corePath    "Menu.ps1"),
     (Join-Path $corePath    "Orchestrator.ps1"),
@@ -39,9 +40,9 @@ $filesToDotSource = @(
     (Join-Path $modulesPath "LocalSecurity.ps1"),
     (Join-Path $modulesPath "Services.ps1"),
     (Join-Path $modulesPath "NetworkSecurity.ps1"),
-    (Join-Path $modulesPath "IdentityAudit.ps1")
-    (Join-Path $modulesPath "ActiveDirectoryAudit.ps1")
-
+    (Join-Path $modulesPath "IdentityAudit.ps1"),
+    (Join-Path $modulesPath "ActiveDirectoryAudit.ps1"),
+    (Join-Path $modulesPath "PasswordPolicy.ps1")
 )
 
 foreach ($f in $filesToDotSource) {
@@ -62,31 +63,40 @@ Write-Host "================================================" -ForegroundColor C
 Write-Host ""
 
 # ----------------------------
-# Host Role Detection
+# Host Role Selection
 # ----------------------------
-$hostRole = Get-ESAFHostRole
-Write-Host "[*] Detected host role: $hostRole" -ForegroundColor Cyan
+$hostRole = $null
 
-if ($hostRole -eq "Unknown" -and -not $NonInteractive) {
-    Write-Host "[?] Unable to determine host role automatically." -ForegroundColor Yellow
+if (-not $NonInteractive) {
+    Write-Host "[?] Select target host role:" -ForegroundColor Cyan
     Write-Host "    1) Domain Controller"
     Write-Host "    2) Member Server"
     Write-Host "    3) Workstation"
-    $roleChoice = Read-Host "Enter choice (1-3)"
+    Write-Host "    4) IIS Server"
+    Write-Host "    5) File Server"
+    $roleChoice = Read-Host "Enter choice (1-5)"
 
     switch ($roleChoice) {
         "1" { $hostRole = "DomainController" }
         "2" { $hostRole = "MemberServer" }
         "3" { $hostRole = "DomainJoinedWorkstation" }
+        "4" { $hostRole = "IISServer" }
+        "5" { $hostRole = "FileServer" }
         default {
             Write-Host "[!] Invalid choice. Defaulting to MemberServer." -ForegroundColor Yellow
             $hostRole = "MemberServer"
         }
     }
 }
-elseif ($hostRole -eq "Unknown" -and $NonInteractive) {
-    Write-Host "[!] Host role unknown in NonInteractive mode. Defaulting to MemberServer." -ForegroundColor Yellow
-    $hostRole = "MemberServer"
+else {
+    $detectedRole = Get-ESAFHostRole
+    if ([string]::IsNullOrWhiteSpace($detectedRole) -or $detectedRole -eq "Unknown") {
+        Write-Host "[!] Host role unknown in NonInteractive mode. Defaulting to MemberServer." -ForegroundColor Yellow
+        $hostRole = "MemberServer"
+    }
+    else {
+        $hostRole = $detectedRole
+    }
 }
 
 Write-Host "[*] Using host role: $hostRole" -ForegroundColor Green
@@ -118,23 +128,101 @@ Write-Host "[*] Evidence path: $evidenceFolder" -ForegroundColor Cyan
 $scanMode        = "Full"
 $selectedModules = @()
 
+$baselineModules = @(
+    "Firewall",
+    "LocalSecurity",
+    "Services",
+    "NetworkSecurity",
+    "PasswordPolicy"
+)
+
+$roleSpecificModulesMap = @{
+    "DomainController"       = @("IdentityAudit", "ActiveDirectoryAudit")
+    "MemberServer"           = @()
+    "DomainJoinedWorkstation"= @()
+    "IISServer"              = @()
+    "FileServer"             = @()
+}
+
 if (-not $NonInteractive) {
-    $menuChoice = Show-ESAFMainMenu -HostRole $hostRole
+    Write-Host ""
+    Write-Host "================ ESAF Main Menu ================" -ForegroundColor Cyan
+    Write-Host "1) Full Report"
+    Write-Host "2) Server Report"
+    Write-Host "3) Baseline Report"
+    Write-Host "4) Custom Module Selection"
+    Write-Host "================================================" -ForegroundColor Cyan
+
+    $menuChoice = Read-Host "Select an option"
 
     switch ($menuChoice) {
-        "1" { $scanMode = "Full";       $selectedModules = @() }
-        "2" { $scanMode = "RoleBased";  $selectedModules = @("IdentityAudit") }
-        "3" { $scanMode = "RoleBased";  $selectedModules = @("NetworkSecurity") }
-        "4" { $scanMode = "Custom";     $selectedModules = Show-ESAFCustomModuleSelection }
+        "1" {
+            $scanMode = "Full"
+            $selectedModules = @($baselineModules)
+            if ($roleSpecificModulesMap.ContainsKey($hostRole)) {
+                $selectedModules += $roleSpecificModulesMap[$hostRole]
+            }
+        }
+        "2" {
+            $scanMode = "ServerReport"
+            $selectedModules = @($baselineModules)
+            if ($roleSpecificModulesMap.ContainsKey($hostRole)) {
+                $selectedModules += $roleSpecificModulesMap[$hostRole]
+            }
+        }
+        "3" {
+            $scanMode = "Baseline"
+            $selectedModules = @($baselineModules)
+        }
+        "4" {
+            $scanMode = "Custom"
+
+            $availableModules = @($baselineModules)
+            if ($roleSpecificModulesMap.ContainsKey($hostRole)) {
+                $availableModules += $roleSpecificModulesMap[$hostRole]
+            }
+
+            Write-Host ""
+            Write-Host "Available Modules:" -ForegroundColor Cyan
+            for ($i = 0; $i -lt $availableModules.Count; $i++) {
+                Write-Host ("{0}) {1}" -f ($i + 1), $availableModules[$i])
+            }
+
+            $selectionInput = Read-Host "Select module numbers separated by commas (e.g. 1,3,5)"
+            $selectedIndices = $selectionInput.Split(',') | ForEach-Object {
+                $trimmed = $_.Trim()
+                if ($trimmed -match '^\d+$') { [int]$trimmed - 1 }
+            }
+
+            foreach ($index in $selectedIndices) {
+                if ($index -ge 0 -and $index -lt $availableModules.Count) {
+                    $selectedModules += $availableModules[$index]
+                }
+            }
+
+            $selectedModules = $selectedModules | Select-Object -Unique
+        }
         default {
             Write-Host "[!] Invalid menu choice, defaulting to Full scan." -ForegroundColor Yellow
             $scanMode = "Full"
+            $selectedModules = @($baselineModules)
+            if ($roleSpecificModulesMap.ContainsKey($hostRole)) {
+                $selectedModules += $roleSpecificModulesMap[$hostRole]
+            }
         }
+    }
+}
+else {
+    $scanMode = "Full"
+    $selectedModules = @($baselineModules)
+    if ($roleSpecificModulesMap.ContainsKey($hostRole)) {
+        $selectedModules += $roleSpecificModulesMap[$hostRole]
     }
 }
 
 Write-Host ""
 Write-Host "[*] Scan mode   : $scanMode" -ForegroundColor Cyan
+Write-Host "[*] Modules     : $($selectedModules -join ', ')" -ForegroundColor Cyan
 Write-Host ""
 
 # ----------------------------
@@ -144,11 +232,11 @@ $findings = @()
 
 try {
     $findings = Invoke-ESAFOrchestrator `
-        -ScanType       $scanMode `
+        -ScanType        $scanMode `
         -SelectedModules $selectedModules `
-        -SystemRoles    $null `
-        -EvidencePath   $evidenceFolder `
-        -HostRole       $hostRole
+        -SystemRoles     $null `
+        -EvidencePath    $evidenceFolder `
+        -HostRole        $hostRole
 }
 catch {
     Write-Host "[!] Orchestrator failed: $($_.Exception.Message)" -ForegroundColor Red
@@ -157,13 +245,13 @@ catch {
 # ----------------------------
 # Report Paths
 # ----------------------------
-$htmlReportPath = Join-Path $runFolder "DC_Assessment.html"
-$jsonReportPath = Join-Path $runFolder "DC_Assessment.json"
-$csvReportPath  = Join-Path $runFolder "DC_Assessment.csv"
-$txtReportPath  = Join-Path $runFolder "DC_Assessment.txt"
+$htmlReportPath = Join-Path $runFolder "Assessment_Report.html"
+$jsonReportPath = Join-Path $runFolder "Assessment_Report.json"
+$csvReportPath  = Join-Path $runFolder "Assessment_Report.csv"
+$txtReportPath  = Join-Path $runFolder "Assessment_Report.txt"
 
 # ----------------------------
-# Reporting Calls (Fixed)
+# Reporting Calls
 # ----------------------------
 try {
     Export-ESAFHtmlReport -Findings $findings -Path $htmlReportPath -Roles $hostRole -SystemName $hostname -ScanType $scanMode
