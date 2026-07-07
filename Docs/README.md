@@ -1,6 +1,5 @@
-🛡️ Enterprise Security Assessment Framework (ESAF) – Master Prompt
+🛡️ Enterprise Security Assessment Framework (ESAF) 
 
-I want to design and build an Enterprise Security Assessment Framework using PowerShell.
 
 This framework will be used for professional security assessment of Windows-based enterprise environments and will complement vulnerability scanners such as Nessus.
 
