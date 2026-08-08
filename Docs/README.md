@@ -66,7 +66,7 @@ Each run must create a new timestamped folder:
 
 Example:
 
-C:\SECURITYREPORTS\2026-07-05_DC1\
+C:\SECURITYREPORTS\%date%_DC1\
 
 Inside:
 
